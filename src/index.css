@@ -1,0 +1,33 @@
+@import "tailwindcss" source(none);
+@plugin "daisyui" {
+  themes: light --default, dark --prefersdark;
+}
+@source "../index.html";
+@source "./**/*.{ts,tsx}";
+
+:root {
+  --sans: "Aptos", "Bahnschrift", "Segoe UI Variable", "Segoe UI", sans-serif;
+  --mono: "Cascadia Code", "JetBrains Mono", ui-monospace, Consolas, monospace;
+  font-family: var(--sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  min-width: 1180px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-primary) 28%, transparent);
+  color: var(--color-primary-content);
+}
