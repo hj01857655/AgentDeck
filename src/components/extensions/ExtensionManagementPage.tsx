@@ -60,7 +60,7 @@ const definitions: Record<ExtensionKind, ExtensionDefinition> = {
 };
 
 function storageKey(kind: ExtensionKind) {
-  return `ai-gateway:${kind}:managed-items`;
+  return `agentdeck:${kind}:managed-items`;
 }
 
 function createId() {

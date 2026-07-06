@@ -12,9 +12,9 @@ use toml_edit::{value, DocumentMut};
 
 const STORE_PATH: &str = "channels.json";
 const SETTINGS_STORE_PATH: &str = "console-settings.json";
-const CODEX_RUNTIME_PROVIDER_ID: &str = "ai_gateway_endpoint";
+const CODEX_RUNTIME_PROVIDER_ID: &str = "agentdeck_endpoint";
 const CLAUDE_SETTINGS_FILE: &str = "settings.json";
-const CLAUDE_MANAGED_ENV_KEYS_FILE: &str = "ai_gateway_managed_env_keys.json";
+const CLAUDE_MANAGED_ENV_KEYS_FILE: &str = "agentdeck_managed_env_keys.json";
 
 pub struct AppState {
     pub pool: Arc<ChannelPool>,
@@ -595,14 +595,14 @@ fn toggle_skill_app(skill: ManagedSkill, app: String, enabled: bool) -> Result<S
     if enabled {
         let source = PathBuf::from(&skill.path);
         if target_dir.exists() {
-            let backup = target_dir.with_extension(format!("bak-ai-gateway-{}", now_millis()));
+            let backup = target_dir.with_extension(format!("bak-agentdeck-{}", now_millis()));
             fs::rename(&target_dir, &backup).map_err(|e| format!("Backup {}: {}", target_dir.display(), e))?;
             backups.push(backup.display().to_string());
         }
         copy_dir_recursive(&source, &target_dir)?;
         files.push(target_dir.display().to_string());
     } else if target_dir.exists() {
-        let backup = target_dir.with_extension(format!("bak-ai-gateway-{}", now_millis()));
+        let backup = target_dir.with_extension(format!("bak-agentdeck-{}", now_millis()));
         fs::rename(&target_dir, &backup).map_err(|e| format!("Backup {}: {}", target_dir.display(), e))?;
         backups.push(backup.display().to_string());
     }
@@ -929,7 +929,7 @@ fn backup_existing_file(path: &Path) -> Result<Option<PathBuf>, String> {
     }
 
     let backup = path.with_extension(format!(
-        "{}bak-ai-gateway",
+        "{}bak-agentdeck",
         path.extension()
             .and_then(|ext| ext.to_str())
             .map(|ext| format!("{}.", ext))
@@ -947,7 +947,7 @@ fn write_string_with_backup(path: &Path, content: &str) -> Result<Option<PathBuf
 
     let backup = backup_existing_file(path)?;
     let tmp = path.with_extension(format!(
-        "{}tmp-ai-gateway",
+        "{}tmp-agentdeck",
         path.extension()
             .and_then(|ext| ext.to_str())
             .map(|ext| format!("{}.", ext))
@@ -1022,7 +1022,7 @@ fn apply_channel_to_codex(channel: &Channel) -> Result<ToolSyncResult, String> {
     let provider = providers[CODEX_RUNTIME_PROVIDER_ID]
         .as_table_mut()
         .ok_or_else(|| "config.toml target provider is not a table".to_string())?;
-    provider["name"] = value(format!("AI Gateway - {}", channel.name));
+    provider["name"] = value(format!("AgentDeck - {}", channel.name));
     provider["base_url"] = value(codex_base_url(&channel.base_url));
     provider["wire_api"] = value("responses");
     provider["requires_openai_auth"] = value(true);

@@ -13,7 +13,7 @@ describe('i18n core', () => {
     const zh = createTranslator('zh-CN');
     const en = createTranslator('en-US');
 
-    expect(zh('app.title')).toBe('AI 网关');
+    expect(zh('app.title')).toBe('AgentDeck');
     expect(en('dashboard.addChannel')).toBe('添加提供商');
     expect(zh('missing.key' as never)).toBe('missing.key');
   });

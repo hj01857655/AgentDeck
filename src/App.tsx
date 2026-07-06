@@ -50,7 +50,7 @@ function App() {
         <div className="mx-auto flex max-w-[1800px] items-center justify-between gap-4">
           <button type="button" onClick={() => setActivePage('providers')} className="flex items-center gap-3 rounded-2xl text-left" aria-label="提供商管理" title="提供商管理">
             <div className={`grid h-10 w-10 place-items-center rounded-2xl border transition ${activePage === 'providers' ? 'border-primary/50 bg-primary/15 text-primary' : 'border-cyan-400/30 bg-cyan-400/10 text-cyan-200 shadow-[0_0_28px_rgba(34,211,238,0.16)]'}`}>
-              AG
+              AD
             </div>
             <div>
               <h1 className="text-lg font-semibold tracking-tight text-base-content">{t('app.title')}</h1>

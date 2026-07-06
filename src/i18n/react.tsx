@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createTranslator, normalizeLanguage, type Language } from './core';
 import { I18nContext } from './context';
 
-const STORAGE_KEY = 'ai-gateway-language';
+const STORAGE_KEY = 'agentdeck-language';
 
 function initialLanguage(): Language {
   if (typeof window === 'undefined') return 'en-US';

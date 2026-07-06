@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 
 type ThemeName = 'light' | 'dark';
 
-const storageKey = 'ai-gateway-theme';
+const storageKey = 'agentdeck-theme';
 
 function resolveInitialTheme(): ThemeName {
   if (typeof window === 'undefined') return 'light';

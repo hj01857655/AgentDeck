@@ -36,7 +36,7 @@ type PendingAction = { kind: 'delete'; channel: Channel };
 
 type AppliedToolChannelIds = Partial<Record<ToolSyncTarget, string>>;
 
-const appliedToolStorageKey = 'ai-gateway:applied-tool-channel-ids';
+const appliedToolStorageKey = 'agentdeck:applied-tool-channel-ids';
 
 function readAppliedToolChannelIds(): AppliedToolChannelIds {
   if (typeof window === 'undefined') return {};

@@ -27,7 +27,7 @@ function serializeModels(models: string[]) {
 }
 
 function modelCacheKey(protocol: ProviderProtocol, baseUrl: string) {
-  return `ai-gateway:model-list:${protocol}:${baseUrl.trim().replace(/\/+$/, '')}`;
+  return `agentdeck:model-list:${protocol}:${baseUrl.trim().replace(/\/+$/, '')}`;
 }
 
 function readModelCache(protocol: ProviderProtocol, baseUrl: string): string[] {

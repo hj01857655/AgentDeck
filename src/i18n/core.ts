@@ -75,7 +75,7 @@ export type TranslationKey =
 type Dictionary = Record<TranslationKey, string>;
 
 const en: Dictionary = {
-  'app.title': 'AI 网关',
+  'app.title': 'AgentDeck',
   'app.subtitle': '提供商控制台',
   'app.status': 'Tauri 本地控制平面 · v0.1.0',
   'language.label': '语言',
@@ -147,7 +147,7 @@ const en: Dictionary = {
 
 const zh: Dictionary = {
   ...en,
-  'app.title': 'AI 网关',
+  'app.title': 'AgentDeck',
   'app.subtitle': '提供商控制台',
   'app.status': 'Tauri 本地控制平面 · v0.1.0',
   'language.label': '语言',
