@@ -2,11 +2,12 @@ import { useState, type ReactNode } from 'react';
 import Dashboard from './components/Dashboard';
 import { LanguageToggle } from './components/shared/LanguageToggle';
 import { ThemeToggle } from './components/shared/ThemeToggle';
-import { McpIcon, PluginIcon, SkillsIcon } from './components/shared/ActionIcons';
+import { McpIcon, PluginIcon, SessionIcon, SkillsIcon } from './components/shared/ActionIcons';
 import { ExtensionManagementPage, type ExtensionKind } from './components/extensions/ExtensionManagementPage';
+import { SessionManagementPage } from './components/sessions/SessionManagementPage';
 import { useI18n } from './i18n';
 
-type WorkspacePage = 'providers' | ExtensionKind;
+type WorkspacePage = 'providers' | 'sessions' | ExtensionKind;
 
 interface HeaderToolButtonProps {
   label: string;
@@ -54,7 +55,7 @@ function App() {
             </div>
             <div>
               <h1 className="text-lg font-semibold tracking-tight text-base-content">{t('app.title')}</h1>
-              <p className="text-xs uppercase tracking-[0.22em] text-base-content/60">{activePage === 'providers' ? t('app.subtitle') : activePage === 'mcp' ? 'MCP 管理' : activePage === 'skills' ? 'Skills 管理' : 'Plugin 管理'}</p>
+              <p className="text-xs uppercase tracking-[0.22em] text-base-content/60">{activePage === 'providers' ? t('app.subtitle') : activePage === 'mcp' ? 'MCP 管理' : activePage === 'skills' ? 'Skills 管理' : activePage === 'plugin' ? 'Plugin 管理' : '会话管理'}</p>
             </div>
           </button>
           <div className="flex items-center gap-3">
@@ -72,6 +73,9 @@ function App() {
               <HeaderToolButton label="Plugin 管理" active={activePage === 'plugin'} onClick={() => setActivePage('plugin')}>
                 <PluginIcon />
               </HeaderToolButton>
+              <HeaderToolButton label="会话管理" active={activePage === 'sessions'} onClick={() => setActivePage('sessions')}>
+                <SessionIcon />
+              </HeaderToolButton>
             </div>
             <ThemeToggle />
             <LanguageToggle />
@@ -80,7 +84,7 @@ function App() {
       </header>
 
       <main className="px-6 py-6">
-        {activePage === 'providers' ? <Dashboard /> : <ExtensionManagementPage kind={activePage} />}
+        {activePage === 'providers' ? <Dashboard /> : activePage === 'sessions' ? <SessionManagementPage /> : <ExtensionManagementPage kind={activePage} />}
       </main>
     </div>
   );

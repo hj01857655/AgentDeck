@@ -1,352 +1,354 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { listExtensionLocations, type ExtensionLocation } from '../../lib/tauri';
+import {
+  deleteMcpServer,
+  listExtensionLocations,
+  listManagedSkills,
+  listMcpServers,
+  toggleMcpApp,
+  toggleSkillApp,
+  upsertMcpServer,
+  type ExtensionLocation,
+  type ManagedMcpServer,
+  type ManagedSkill,
+  type ToolTargetApps,
+} from '../../lib/tauri';
 import { Button } from '../shared/Button';
 import { Dialog } from '../shared/Dialog';
-import { EditIcon, PlusIcon, PowerIcon, RefreshIcon, SaveIcon, TrashIcon, XIcon } from '../shared/ActionIcons';
+import { CodexBrandIcon, ClaudeBrandIcon } from '../shared/BrandIcons';
+import { EditIcon, PlusIcon, RefreshIcon, SaveIcon, TrashIcon, XIcon } from '../shared/ActionIcons';
 
 export type ExtensionKind = 'mcp' | 'skills' | 'plugin';
 
-interface ExtensionDefinition {
-  title: string;
-  eyebrow: string;
-  description: string;
-  nameLabel: string;
-  sourceLabel: string;
-  sourcePlaceholder: string;
-  emptyTitle: string;
-  emptyDescription: string;
-}
+type TargetApp = keyof ToolTargetApps;
 
-interface ManagedExtension {
+type PluginRow = {
   id: string;
   name: string;
-  source: string;
   description: string;
-  enabled: boolean;
-  updatedAt: number;
-}
+  path: string;
+  apps: ToolTargetApps;
+  updated_at: number;
+};
 
-const definitions: Record<ExtensionKind, ExtensionDefinition> = {
+const pageCopy: Record<ExtensionKind, { title: string; eyebrow: string; description: string; empty: string }> = {
   mcp: {
     title: 'MCP 管理',
-    eyebrow: 'Codex / Claude MCP',
-    description: '按官方路径查看 MCP：Codex 使用 config.toml；Claude 用户/本地状态在 ~/.claude.json，项目配置在 .mcp.json。',
-    nameLabel: '服务名称',
-    sourceLabel: '命令 / URL',
-    sourcePlaceholder: 'npx -y @modelcontextprotocol/server-filesystem ...',
-    emptyTitle: '还没有手动 MCP 配置',
-    emptyDescription: '真实 MCP 配置在上方目录区展示；这里可记录待添加或自定义服务。',
+    eyebrow: 'Claude / Codex',
+    description: '统一读取 Claude 与 Codex 的 MCP 配置，开关会同步写回对应工具配置文件。',
+    empty: '还没有发现 MCP 服务。点击添加，或先从工具配置中导入。',
   },
   skills: {
     title: 'Skills 管理',
-    eyebrow: 'Codex / Claude Skills',
-    description: 'Codex 源码显示主目录是 $HOME/.agents/skills；Claude 官方文档使用 ~/.claude/skills 与项目 .claude/skills，旧 commands 兼容为 skills。',
-    nameLabel: 'Skill 名称',
-    sourceLabel: '仓库 / 路径',
-    sourcePlaceholder: 'https://github.com/... --skill name',
-    emptyTitle: '还没有手动 Skill 配置',
-    emptyDescription: '真实 Skills 目录在上方目录区展示；这里可记录待安装或自定义 Skill。',
+    eyebrow: 'Claude / Codex',
+    description: '扫描 Claude 与 Codex 的 Skills 目录，开关会复制/备份并同步到目标工具目录。',
+    empty: '还没有发现 Skill。先安装 Skill，或把包含 SKILL.md 的目录放到 Skills 目录。',
   },
   plugin: {
     title: 'Plugin 管理',
-    eyebrow: 'Codex / Claude Plugins',
-    description: '按官方路径查看插件：Codex 使用 plugins/cache；Claude 插件属于 settings 作用域，落在 ~/.claude/settings.json、项目 .claude/settings.json 或 settings.local.json。',
-    nameLabel: 'Plugin 名称',
-    sourceLabel: '入口 / 路径',
-    sourcePlaceholder: '.codex-plugin/plugin.json 或插件目录',
-    emptyTitle: '还没有手动 Plugin 配置',
-    emptyDescription: '真实插件目录在上方目录区展示；这里可记录待安装或自定义插件。',
+    eyebrow: 'Claude / Codex',
+    description: '展示 Codex 插件目录和 Claude settings 插件作用域，使用同一套开关管理入口。',
+    empty: '还没有发现 Plugin 条目。',
   },
 };
 
-function storageKey(kind: ExtensionKind) {
-  return `agentdeck:${kind}:managed-items`;
+function pluginSwitchStorageKey() {
+  return 'agentdeck:plugin-target-switches';
 }
 
-function createId() {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
-  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-function readItems(kind: ExtensionKind): ManagedExtension[] {
-  if (typeof window === 'undefined') return [];
+function readPluginSwitches(): Record<string, ToolTargetApps> {
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(storageKey(kind)) ?? '[]') as ManagedExtension[];
-    return Array.isArray(parsed)
-      ? parsed.filter((item) => item && typeof item.id === 'string' && typeof item.name === 'string')
-      : [];
+    const raw = window.localStorage.getItem(pluginSwitchStorageKey());
+    return raw ? JSON.parse(raw) as Record<string, ToolTargetApps> : {};
   } catch {
-    return [];
+    return {};
   }
 }
 
-function writeItems(kind: ExtensionKind, items: ManagedExtension[]) {
-  if (typeof window === 'undefined') return;
-  window.localStorage.setItem(storageKey(kind), JSON.stringify(items));
+function writePluginSwitches(value: Record<string, ToolTargetApps>) {
+  window.localStorage.setItem(pluginSwitchStorageKey(), JSON.stringify(value));
 }
 
-function createEmptyItem(): ManagedExtension {
-  return {
-    id: createId(),
-    name: '',
-    source: '',
-    description: '',
-    enabled: true,
-    updatedAt: Date.now(),
-  };
+function countApps<T extends { apps: ToolTargetApps }>(rows: T[]) {
+  return rows.reduce(
+    (acc, row) => ({
+      claude: acc.claude + (row.apps.claude ? 1 : 0),
+      codex: acc.codex + (row.apps.codex ? 1 : 0),
+    }),
+    { claude: 0, codex: 0 },
+  );
 }
 
-function formatDate(value: number) {
-  if (!value) return '未保存';
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(value));
-}
-
-function targetTone(target: string) {
-  if (target.includes('system')) return 'border-info/25 bg-info/10 text-info';
-  if (target.includes('legacy')) return 'border-warning/25 bg-warning/10 text-warning';
-  if (target.includes('claude')) return 'border-secondary/25 bg-secondary/10 text-secondary';
-  return 'border-primary/25 bg-primary/10 text-primary';
-}
-
-interface ExtensionManagementPageProps {
-  kind: ExtensionKind;
-}
-
-export function ExtensionManagementPage({ kind }: ExtensionManagementPageProps) {
-  const definition = definitions[kind];
-  const [items, setItems] = useState<ManagedExtension[]>(() => readItems(kind));
-  const [locations, setLocations] = useState<ExtensionLocation[]>([]);
-  const [loadingLocations, setLoadingLocations] = useState(false);
-  const [editingItem, setEditingItem] = useState<ManagedExtension | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const enabledCount = useMemo(() => items.filter((item) => item.enabled).length, [items]);
-  const locationEntryCount = useMemo(() => locations.reduce((sum, location) => sum + location.entries.length, 0), [locations]);
-
-  const refreshLocations = useCallback(async () => {
-    setLoadingLocations(true);
-    setError(null);
-    try {
-      setLocations(await listExtensionLocations(kind));
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setLoadingLocations(false);
-    }
-  }, [kind]);
-
-  useEffect(() => {
-    setItems(readItems(kind));
-    setEditingItem(null);
-    setError(null);
-    void refreshLocations();
-  }, [kind, refreshLocations]);
-
-  const persist = (nextItems: ManagedExtension[]) => {
-    setItems(nextItems);
-    writeItems(kind, nextItems);
-  };
-
-  const openNew = () => {
-    setEditingItem(createEmptyItem());
-    setError(null);
-  };
-
-  const saveEditing = () => {
-    if (!editingItem) return;
-    const name = editingItem.name.trim();
-    const source = editingItem.source.trim();
-    if (!name) return setError(`${definition.nameLabel}必填。`);
-    if (!source) return setError(`${definition.sourceLabel}必填。`);
-
-    const normalized: ManagedExtension = {
-      ...editingItem,
-      name,
-      source,
-      description: editingItem.description.trim(),
-      updatedAt: Date.now(),
-    };
-    const exists = items.some((item) => item.id === normalized.id);
-    persist(exists ? items.map((item) => (item.id === normalized.id ? normalized : item)) : [normalized, ...items]);
-    setEditingItem(null);
-    setError(null);
-  };
-
-  const toggleItem = (item: ManagedExtension) => {
-    persist(items.map((current) => current.id === item.id ? { ...current, enabled: !current.enabled, updatedAt: Date.now() } : current));
-  };
-
-  const deleteItem = (item: ManagedExtension) => {
-    persist(items.filter((current) => current.id !== item.id));
-  };
-
+function AppSwitchButton({ app, enabled, disabled, onToggle }: { app: TargetApp; enabled: boolean; disabled?: boolean; onToggle: () => void }) {
+  const label = app === 'claude' ? 'Claude' : 'Codex';
   return (
-    <div className="mx-auto max-w-[1800px] space-y-5">
-      <section className="rounded-2xl border border-base-300 bg-base-200/70 p-4 shadow-xl">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">{definition.eyebrow}</p>
-            <h2 className="mt-1 text-xl font-semibold text-base-content">{definition.title}</h2>
-            <p className="mt-2 text-sm text-base-content/55">{definition.description}</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="rounded-xl border border-base-300 bg-base-100/75 px-3 py-2 text-xs text-base-content/60">
-              目录项 <span className="font-semibold text-base-content">{locationEntryCount}</span>
-            </div>
-            <div className="rounded-xl border border-base-300 bg-base-100/75 px-3 py-2 text-xs text-base-content/60">
-              手动启用 <span className="font-semibold text-base-content">{enabledCount}/{items.length}</span>
-            </div>
-            <Button tone="secondary" onClick={() => void refreshLocations()} disabled={loadingLocations} className="btn-square" aria-label="刷新目录" title="刷新目录">
-              {loadingLocations ? <span className="loading loading-spinner loading-xs" /> : <RefreshIcon />}
-            </Button>
-            <Button tone="primary" onClick={openNew} className="btn-square" aria-label={`添加${definition.title}`} title={`添加${definition.title}`}>
-              <PlusIcon />
-            </Button>
-          </div>
-        </div>
-      </section>
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onToggle}
+      aria-label={`${enabled ? '禁用' : '启用'} ${label}`}
+      title={`${label}${enabled ? ' 已启用' : ' 未启用'}`}
+      className={`grid h-8 w-8 place-items-center rounded-xl border transition ${
+        enabled
+          ? app === 'claude'
+            ? 'border-orange-500/30 bg-orange-500/15 text-orange-600 shadow-[inset_0_0_0_1px_rgba(249,115,22,0.18)] dark:text-orange-300'
+            : 'border-emerald-500/30 bg-emerald-500/15 text-emerald-600 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.18)] dark:text-emerald-300'
+          : 'border-base-300 bg-base-200/70 opacity-45 hover:opacity-90'
+      } ${disabled ? 'cursor-not-allowed opacity-40' : ''}`}
+    >
+      {app === 'claude' ? <ClaudeBrandIcon size={16} /> : <CodexBrandIcon size={16} />}
+    </button>
+  );
+}
 
-      {error && <div className="rounded-2xl border border-error/30 bg-error/10 p-4 text-sm text-error">{error}</div>}
-
-      <section className="rounded-3xl border border-base-300 bg-base-200/55 p-4 shadow-2xl">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div>
-            <h3 className="text-base font-semibold text-base-content">真实运行时目录</h3>
-            <p className="mt-1 text-xs text-base-content/55">来自本机 Codex / Claude 配置路径扫描，不是手填数据。</p>
-          </div>
-        </div>
-        <div className="grid gap-3 xl:grid-cols-2">
-          {locations.map((location) => (
-            <article key={`${location.target}:${location.path}`} className="rounded-2xl border border-base-300 bg-base-100/75 p-3">
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h4 className="font-semibold text-base-content">{location.label}</h4>
-                    <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${targetTone(location.target)}`}>{location.target}</span>
-                    <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${location.exists ? 'border-success/25 bg-success/10 text-success' : 'border-base-300 bg-base-200 text-base-content/55'}`}>
-                      {location.exists ? location.is_file ? '文件存在' : '目录存在' : '不存在'}
-                    </span>
-                  </div>
-                  <p className="mt-1 break-all font-mono text-xs text-base-content/55">{location.path}</p>
-                </div>
-                <span className="rounded-xl border border-base-300 bg-base-200 px-2 py-1 text-xs text-base-content/60">
-                  {location.entries.length} 项
-                </span>
-              </div>
-
-              {location.entries.length === 0 ? (
-                <div className="mt-3 rounded-xl border border-dashed border-base-300 bg-base-200/50 p-3 text-sm text-base-content/50">
-                  {location.exists ? '没有发现可展示条目。' : '路径不存在。'}
-                </div>
-              ) : (
-                <div className="mt-3 grid max-h-72 gap-1 overflow-auto pr-1">
-                  {location.entries.map((entry) => (
-                    <div key={entry.path} className="flex min-w-0 items-center justify-between gap-2 rounded-xl bg-base-200/70 px-2 py-1.5">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-base-content">{entry.name}</p>
-                        <p className="truncate font-mono text-[11px] text-base-content/45">{entry.path}</p>
-                      </div>
-                      <span className="shrink-0 rounded-md border border-base-300 px-1.5 py-0.5 text-[10px] uppercase text-base-content/50">{entry.kind}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section className="rounded-3xl border border-base-300 bg-base-200/55 p-4 shadow-2xl">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div>
-            <h3 className="text-base font-semibold text-base-content">手动管理项</h3>
-            <p className="mt-1 text-xs text-base-content/55">用于记录待安装、外部来源或暂未落盘的配置。</p>
-          </div>
-        </div>
-
-        {items.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-base-300 bg-base-100/60 p-8 text-center">
-            <h3 className="text-base font-semibold text-base-content">{definition.emptyTitle}</h3>
-            <p className="mt-2 text-sm text-base-content/55">{definition.emptyDescription}</p>
-          </div>
-        ) : (
-          <div className="grid gap-2">
-            {items.map((item) => (
-              <article key={item.id} className="grid gap-3 rounded-2xl border border-base-300 bg-base-100/75 px-3 py-2.5 transition hover:border-primary/30 xl:grid-cols-[minmax(180px,1fr)_minmax(260px,1.4fr)_minmax(160px,0.8fr)_auto] xl:items-center">
-                <div className="min-w-0">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <h3 className="truncate text-sm font-semibold text-base-content">{item.name}</h3>
-                    <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${item.enabled ? 'border-success/25 bg-success/10 text-success' : 'border-base-300 bg-base-200 text-base-content/55'}`}>
-                      <span className={`h-1.5 w-1.5 rounded-full ${item.enabled ? 'bg-success' : 'bg-base-content/35'}`} />
-                      {item.enabled ? '已启用' : '已禁用'}
-                    </span>
-                  </div>
-                  <p className="mt-1 truncate text-xs text-base-content/55">{item.description || '未填写说明'}</p>
-                </div>
-                <p className="min-w-0 truncate rounded-lg bg-base-200 px-2 py-1 font-mono text-xs text-base-content/65">{item.source}</p>
-                <p className="text-xs text-base-content/50">更新于 {formatDate(item.updatedAt)}</p>
-                <div className="flex shrink-0 items-center gap-1.5 xl:justify-end">
-                  <Button tone="ghost" onClick={() => setEditingItem(item)} className="btn-square" aria-label="编辑" title="编辑">
-                    <EditIcon />
-                  </Button>
-                  <Button tone={item.enabled ? 'ghost' : 'success'} onClick={() => toggleItem(item)} className="btn-square" aria-label={item.enabled ? '禁用' : '启用'} title={item.enabled ? '禁用' : '启用'}>
-                    <PowerIcon />
-                  </Button>
-                  <Button tone="danger" onClick={() => deleteItem(item)} className="btn-square" aria-label="删除" title="删除">
-                    <TrashIcon />
-                  </Button>
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <Dialog
-        open={editingItem !== null}
-        title={editingItem && items.some((item) => item.id === editingItem.id) ? `编辑${definition.title}` : `添加${definition.title}`}
-        description="保存到本地手动管理列表，不会直接写入 Codex / Claude 配置文件。"
-        onClose={() => setEditingItem(null)}
-        size="md"
-      >
-        {editingItem && (
-          <div className="space-y-4">
-            <label className="block space-y-1.5">
-              <span className="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/55">{definition.nameLabel}</span>
-              <input value={editingItem.name} onChange={(event) => setEditingItem({ ...editingItem, name: event.target.value })} className="input input-bordered w-full bg-base-100" placeholder={definition.nameLabel} />
-            </label>
-            <label className="block space-y-1.5">
-              <span className="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/55">{definition.sourceLabel}</span>
-              <input value={editingItem.source} onChange={(event) => setEditingItem({ ...editingItem, source: event.target.value })} className="input input-bordered w-full bg-base-100 font-mono" placeholder={definition.sourcePlaceholder} />
-            </label>
-            <label className="block space-y-1.5">
-              <span className="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/55">说明</span>
-              <textarea value={editingItem.description} onChange={(event) => setEditingItem({ ...editingItem, description: event.target.value })} rows={4} className="textarea textarea-bordered w-full resize-none bg-base-100" placeholder="用途、参数、注意事项" />
-            </label>
-            <label className="flex items-center justify-between gap-3 rounded-2xl border border-base-300 bg-base-200/60 p-3">
-              <span>
-                <span className="block text-sm font-medium text-base-content">启用</span>
-                <span className="text-xs text-base-content/55">禁用后仍保留配置，但不作为可用项展示。</span>
-              </span>
-              <input type="checkbox" className="toggle toggle-primary" checked={editingItem.enabled} onChange={(event) => setEditingItem({ ...editingItem, enabled: event.target.checked })} />
-            </label>
-
-            {error && <div className="rounded-2xl border border-error/30 bg-error/10 p-3 text-sm text-error">{error}</div>}
-
-            <div className="flex justify-end gap-2">
-              <Button tone="ghost" onClick={() => setEditingItem(null)} className="btn-square" aria-label="取消" title="取消"><XIcon /></Button>
-              <Button tone="primary" onClick={saveEditing} className="btn-square" aria-label="保存" title="保存"><SaveIcon /></Button>
-            </div>
-          </div>
-        )}
-      </Dialog>
+function AppSwitchGroup({ apps, disabled, onToggle }: { apps: ToolTargetApps; disabled?: boolean; onToggle: (app: TargetApp, enabled: boolean) => void }) {
+  return (
+    <div className="flex shrink-0 items-center gap-1.5">
+      <AppSwitchButton app="claude" enabled={apps.claude} disabled={disabled} onToggle={() => onToggle('claude', !apps.claude)} />
+      <AppSwitchButton app="codex" enabled={apps.codex} disabled={disabled} onToggle={() => onToggle('codex', !apps.codex)} />
     </div>
   );
 }
 
+function StatsBar({ total, counts, loading, onRefresh, onAdd }: { total: number; counts: { claude: number; codex: number }; loading: boolean; onRefresh: () => void; onAdd?: () => void }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="rounded-xl border border-base-300 bg-base-100/75 px-3 py-2 text-xs text-base-content/60">总计 <b className="text-base-content">{total}</b></span>
+      <span className="inline-flex items-center gap-1.5 rounded-xl border border-orange-500/20 bg-orange-500/10 px-3 py-2 text-xs text-orange-600 dark:text-orange-300"><ClaudeBrandIcon size={14} /> {counts.claude}</span>
+      <span className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-600 dark:text-emerald-300"><CodexBrandIcon size={14} /> {counts.codex}</span>
+      <Button tone="secondary" onClick={onRefresh} disabled={loading} className="btn-square" aria-label="刷新" title="刷新">
+        {loading ? <span className="loading loading-spinner loading-xs" /> : <RefreshIcon />}
+      </Button>
+      {onAdd && <Button tone="primary" onClick={onAdd} className="btn-square" aria-label="添加" title="添加"><PlusIcon /></Button>}
+    </div>
+  );
+}
 
+function EmptyBlock({ text }: { text: string }) {
+  return <div className="rounded-2xl border border-dashed border-base-300 bg-base-100/60 p-8 text-center text-sm text-base-content/55">{text}</div>;
+}
+
+function SourceLocations({ locations }: { locations: ExtensionLocation[] }) {
+  return (
+    <details className="rounded-2xl border border-base-300 bg-base-100/60">
+      <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-base-content">运行时路径</summary>
+      <div className="grid gap-2 border-t border-base-300 p-3 xl:grid-cols-2">
+        {locations.map((location) => (
+          <div key={`${location.target}:${location.path}`} className="rounded-xl border border-base-300 bg-base-200/50 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium text-base-content">{location.label}</div>
+                <div className="truncate font-mono text-[11px] text-base-content/45">{location.path}</div>
+              </div>
+              <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] ${location.exists ? 'border-success/25 bg-success/10 text-success' : 'border-base-300 text-base-content/45'}`}>{location.exists ? `${location.entries.length} 项` : '不存在'}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function makeEmptyMcp(): ManagedMcpServer {
+  return {
+    id: '',
+    name: '',
+    description: '',
+    server: { type: 'stdio', command: '', args: [] },
+    apps: { claude: true, codex: true },
+    updated_at: Date.now(),
+  };
+}
+
+function McpPanel({ onError }: { onError: (value: string | null) => void }) {
+  const [rows, setRows] = useState<ManagedMcpServer[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [editing, setEditing] = useState<ManagedMcpServer | null>(null);
+  const [jsonText, setJsonText] = useState('');
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    onError(null);
+    try {
+      setRows(await listMcpServers());
+    } catch (err) {
+      onError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [onError]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+  const counts = useMemo(() => countApps(rows), [rows]);
+
+  const openEdit = (row: ManagedMcpServer) => {
+    setEditing(row);
+    setJsonText(JSON.stringify(row.server, null, 2));
+  };
+
+  const save = async () => {
+    if (!editing) return;
+    try {
+      const server = JSON.parse(jsonText) as Record<string, unknown>;
+      await upsertMcpServer({ ...editing, id: editing.id.trim(), name: editing.name.trim() || editing.id.trim(), server, updated_at: Date.now() });
+      setEditing(null);
+      await refresh();
+    } catch (err) {
+      onError(String(err));
+    }
+  };
+
+  const toggle = async (row: ManagedMcpServer, app: TargetApp, enabled: boolean) => {
+    const next = { ...row, apps: { ...row.apps, [app]: enabled }, updated_at: Date.now() };
+    setRows((current) => current.map((item) => item.id === row.id ? next : item));
+    try {
+      await toggleMcpApp(row.id, app, enabled, next);
+      await refresh();
+    } catch (err) {
+      onError(String(err));
+      await refresh();
+    }
+  };
+
+  const remove = async (row: ManagedMcpServer) => {
+    try {
+      await deleteMcpServer(row.id);
+      await refresh();
+    } catch (err) {
+      onError(String(err));
+    }
+  };
+
+  return (
+    <>
+      <StatsBar total={rows.length} counts={counts} loading={loading} onRefresh={refresh} onAdd={() => openEdit(makeEmptyMcp())} />
+      {rows.length === 0 ? <EmptyBlock text={pageCopy.mcp.empty} /> : (
+        <div className="overflow-hidden rounded-2xl border border-base-300 bg-base-100/70">
+          {rows.map((row, index) => (
+            <div key={row.id} className={`group flex items-center gap-3 px-4 py-2.5 transition hover:bg-base-200/70 ${index !== rows.length - 1 ? 'border-b border-base-300' : ''}`}>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-sm font-semibold text-base-content">{row.name || row.id}</span>
+                  <span className="rounded-md bg-base-200 px-1.5 py-0.5 font-mono text-[10px] text-base-content/50">{row.id}</span>
+                </div>
+                <div className="truncate text-xs text-base-content/50">{row.description || JSON.stringify(row.server)}</div>
+              </div>
+              <AppSwitchGroup apps={row.apps} onToggle={(app, enabled) => void toggle(row, app, enabled)} />
+              <div className="flex shrink-0 items-center gap-1 opacity-0 transition group-hover:opacity-100">
+                <Button tone="ghost" className="btn-square btn-sm" onClick={() => openEdit(row)} aria-label="编辑" title="编辑"><EditIcon /></Button>
+                <Button tone="danger" className="btn-square btn-sm" onClick={() => void remove(row)} aria-label="删除" title="删除"><TrashIcon /></Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <Dialog open={editing !== null} title={editing?.id ? '编辑 MCP 服务' : '添加 MCP 服务'} description="服务定义会按 Claude/Codex 开关写入对应配置。" onClose={() => setEditing(null)} size="lg">
+        {editing && <div className="space-y-3">
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="space-y-1.5"><span className="text-xs font-semibold text-base-content/55">ID</span><input className="input input-bordered w-full bg-base-100" value={editing.id} onChange={(e) => setEditing({ ...editing, id: e.target.value })} /></label>
+            <label className="space-y-1.5"><span className="text-xs font-semibold text-base-content/55">名称</span><input className="input input-bordered w-full bg-base-100" value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} /></label>
+          </div>
+          <label className="space-y-1.5"><span className="text-xs font-semibold text-base-content/55">说明</span><input className="input input-bordered w-full bg-base-100" value={editing.description} onChange={(e) => setEditing({ ...editing, description: e.target.value })} /></label>
+          <textarea className="textarea textarea-bordered min-h-56 w-full bg-base-100 font-mono text-xs" value={jsonText} onChange={(e) => setJsonText(e.target.value)} />
+          <div className="flex items-center justify-between gap-3"><AppSwitchGroup apps={editing.apps} onToggle={(app, enabled) => setEditing({ ...editing, apps: { ...editing.apps, [app]: enabled } })} /><div className="flex gap-2"><Button tone="ghost" className="btn-square" onClick={() => setEditing(null)} aria-label="取消"><XIcon /></Button><Button tone="primary" className="btn-square" onClick={() => void save()} aria-label="保存"><SaveIcon /></Button></div></div>
+        </div>}
+      </Dialog>
+    </>
+  );
+}
+
+function SkillsPanel({ onError }: { onError: (value: string | null) => void }) {
+  const [rows, setRows] = useState<ManagedSkill[]>([]);
+  const [loading, setLoading] = useState(false);
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    onError(null);
+    try { setRows(await listManagedSkills()); } catch (err) { onError(String(err)); } finally { setLoading(false); }
+  }, [onError]);
+  useEffect(() => { void refresh(); }, [refresh]);
+  const counts = useMemo(() => countApps(rows), [rows]);
+  const toggle = async (row: ManagedSkill, app: TargetApp, enabled: boolean) => {
+    const next = { ...row, apps: { ...row.apps, [app]: enabled }, updated_at: Date.now() };
+    setRows((current) => current.map((item) => item.directory === row.directory ? next : item));
+    try { await toggleSkillApp(row, app, enabled); await refresh(); } catch (err) { onError(String(err)); await refresh(); }
+  };
+  return <>
+    <StatsBar total={rows.length} counts={counts} loading={loading} onRefresh={refresh} />
+    {rows.length === 0 ? <EmptyBlock text={pageCopy.skills.empty} /> : <div className="overflow-hidden rounded-2xl border border-base-300 bg-base-100/70">
+      {rows.map((row, index) => <div key={row.directory} className={`group flex items-center gap-3 px-4 py-2.5 transition hover:bg-base-200/70 ${index !== rows.length - 1 ? 'border-b border-base-300' : ''}`}>
+        <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate text-sm font-semibold text-base-content">{row.name}</span><span className="rounded-md bg-base-200 px-1.5 py-0.5 font-mono text-[10px] text-base-content/50">{row.directory}</span></div><div className="truncate text-xs text-base-content/50">{row.description || row.source} · {row.path}</div></div>
+        <AppSwitchGroup apps={row.apps} onToggle={(app, enabled) => void toggle(row, app, enabled)} />
+      </div>)}
+    </div>}
+  </>;
+}
+
+function buildPluginRows(locations: ExtensionLocation[]): PluginRow[] {
+  const switches = readPluginSwitches();
+  return locations.flatMap((location) => {
+    const baseApps = { claude: location.target.includes('claude'), codex: location.target.includes('codex') };
+    const entries = location.entries.length > 0 ? location.entries : location.exists ? [{ name: location.label, path: location.path, kind: location.is_file ? 'file' : 'dir' }] : [];
+    return entries.map((entry) => ({
+      id: `${location.target}:${entry.path}`,
+      name: entry.name,
+      description: location.label,
+      path: entry.path,
+      apps: switches[`${location.target}:${entry.path}`] ?? baseApps,
+      updated_at: Date.now(),
+    }));
+  });
+}
+
+function PluginPanel({ locations, onError }: { locations: ExtensionLocation[]; onError: (value: string | null) => void }) {
+  const [rows, setRows] = useState<PluginRow[]>(() => buildPluginRows(locations));
+  useEffect(() => setRows(buildPluginRows(locations)), [locations]);
+  const counts = useMemo(() => countApps(rows), [rows]);
+  const toggle = (row: PluginRow, app: TargetApp, enabled: boolean) => {
+    const nextRows = rows.map((item) => item.id === row.id ? { ...item, apps: { ...item.apps, [app]: enabled } } : item);
+    const switches = readPluginSwitches();
+    const next = nextRows.find((item) => item.id === row.id);
+    if (next) switches[row.id] = next.apps;
+    writePluginSwitches(switches);
+    setRows(nextRows);
+    onError(null);
+  };
+  return <>
+    <StatsBar total={rows.length} counts={counts} loading={false} onRefresh={() => setRows(buildPluginRows(locations))} />
+    {rows.length === 0 ? <EmptyBlock text={pageCopy.plugin.empty} /> : <div className="overflow-hidden rounded-2xl border border-base-300 bg-base-100/70">
+      {rows.map((row, index) => <div key={row.id} className={`group flex items-center gap-3 px-4 py-2.5 transition hover:bg-base-200/70 ${index !== rows.length - 1 ? 'border-b border-base-300' : ''}`}>
+        <div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-base-content">{row.name}</div><div className="truncate text-xs text-base-content/50">{row.description} · {row.path}</div></div>
+        <AppSwitchGroup apps={row.apps} onToggle={(app, enabled) => toggle(row, app, enabled)} />
+      </div>)}
+    </div>}
+  </>;
+}
+
+interface ExtensionManagementPageProps { kind: ExtensionKind; }
+
+export function ExtensionManagementPage({ kind }: ExtensionManagementPageProps) {
+  const copy = pageCopy[kind];
+  const [locations, setLocations] = useState<ExtensionLocation[]>([]);
+  const [loadingLocations, setLoadingLocations] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refreshLocations = useCallback(async () => {
+    setLoadingLocations(true);
+    setError(null);
+    try { setLocations(await listExtensionLocations(kind)); } catch (err) { setError(String(err)); } finally { setLoadingLocations(false); }
+  }, [kind]);
+
+  useEffect(() => { void refreshLocations(); }, [refreshLocations]);
+
+  return <div className="mx-auto max-w-[1800px] space-y-4">
+    <section className="rounded-2xl border border-base-300 bg-base-200/70 p-4 shadow-xl">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">{copy.eyebrow}</p><h2 className="mt-1 text-xl font-semibold text-base-content">{copy.title}</h2><p className="mt-2 text-sm text-base-content/55">{copy.description}</p></div>
+        <Button tone="secondary" onClick={() => void refreshLocations()} disabled={loadingLocations} className="btn-square" aria-label="刷新路径" title="刷新路径">{loadingLocations ? <span className="loading loading-spinner loading-xs" /> : <RefreshIcon />}</Button>
+      </div>
+    </section>
+    {error && <div className="rounded-2xl border border-error/30 bg-error/10 p-3 text-sm text-error">{error}</div>}
+    {kind === 'mcp' && <McpPanel onError={setError} />}
+    {kind === 'skills' && <SkillsPanel onError={setError} />}
+    {kind === 'plugin' && <PluginPanel locations={locations} onError={setError} />}
+    <SourceLocations locations={locations} />
+  </div>;
+}
