@@ -3,6 +3,30 @@ import type { Channel } from './tauri';
 export type ProviderProtocol = Channel['protocol'];
 export type ProviderFamily = 'openai' | 'anthropic';
 export type ProviderStatusTone = 'good' | 'warn' | 'bad' | 'neutral';
+export type ServiceProviderId =
+  | 'openai'
+  | 'anthropic'
+  | 'xai'
+  | 'google-gemini'
+  | 'deepseek'
+  | 'mistral'
+  | 'openrouter'
+  | 'moonshot'
+  | 'groq'
+  | 'together'
+  | 'fireworks'
+  | 'cerebras'
+  | 'siliconflow'
+  | 'custom';
+
+export interface ServiceProviderOption {
+  id: ServiceProviderId;
+  label: string;
+  description: string;
+  defaultProtocol: ProviderProtocol;
+  defaultBaseUrl: string;
+  placeholderName: string;
+}
 
 export interface ProviderGroup {
   protocol: ProviderProtocol;
@@ -21,7 +45,7 @@ export interface ProviderStatus {
   detail: string;
 }
 
-const PROVIDER_ORDER: ProviderProtocol[] = ['openai-chat-completions', 'openai-responses', 'anthropic-messages'];
+const PROVIDER_ORDER: ProviderProtocol[] = ['openai-responses', 'openai-chat-completions', 'anthropic-messages'];
 
 const PROVIDER_LABELS: Record<ProviderProtocol, string> = {
   'openai-chat-completions': 'OpenAI Chat Completions',
@@ -34,6 +58,137 @@ const PROVIDER_FAMILY: Record<ProviderProtocol, ProviderFamily> = {
   'openai-responses': 'openai',
   'anthropic-messages': 'anthropic',
 };
+
+export const SERVICE_PROVIDERS: ServiceProviderOption[] = [
+  {
+    id: 'openai',
+    label: 'OpenAI',
+    description: '官方 OpenAI API',
+    defaultProtocol: 'openai-responses',
+    defaultBaseUrl: 'https://api.openai.com',
+    placeholderName: 'openai-main',
+  },
+  {
+    id: 'anthropic',
+    label: 'Anthropic',
+    description: 'Claude / Messages API',
+    defaultProtocol: 'anthropic-messages',
+    defaultBaseUrl: 'https://api.anthropic.com',
+    placeholderName: 'anthropic-main',
+  },
+  {
+    id: 'xai',
+    label: 'xAI / Grok',
+    description: 'Grok 模型，OpenAI 兼容接口',
+    defaultProtocol: 'openai-chat-completions',
+    defaultBaseUrl: 'https://api.x.ai/v1',
+    placeholderName: 'xai-grok',
+  },
+  {
+    id: 'google-gemini',
+    label: 'Google Gemini',
+    description: 'Gemini OpenAI 兼容接口',
+    defaultProtocol: 'openai-chat-completions',
+    defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    placeholderName: 'google-gemini',
+  },
+  {
+    id: 'deepseek',
+    label: 'DeepSeek',
+    description: 'DeepSeek OpenAI 兼容接口',
+    defaultProtocol: 'openai-chat-completions',
+    defaultBaseUrl: 'https://api.deepseek.com',
+    placeholderName: 'deepseek',
+  },
+  {
+    id: 'mistral',
+    label: 'Mistral AI',
+    description: 'Mistral Chat Completions',
+    defaultProtocol: 'openai-chat-completions',
+    defaultBaseUrl: 'https://api.mistral.ai/v1',
+    placeholderName: 'mistral',
+  },
+  {
+    id: 'openrouter',
+    label: 'OpenRouter',
+    description: '多模型聚合，OpenAI 兼容接口',
+    defaultProtocol: 'openai-chat-completions',
+    defaultBaseUrl: 'https://openrouter.ai/api/v1',
+    placeholderName: 'openrouter',
+  },
+  {
+    id: 'moonshot',
+    label: 'Moonshot / Kimi',
+    description: 'Moonshot OpenAI 兼容接口',
+    defaultProtocol: 'openai-chat-completions',
+    defaultBaseUrl: 'https://api.moonshot.cn/v1',
+    placeholderName: 'moonshot-kimi',
+  },
+
+  {
+    id: 'groq',
+    label: 'Groq',
+    description: 'Groq OpenAI 兼容接口',
+    defaultProtocol: 'openai-chat-completions',
+    defaultBaseUrl: 'https://api.groq.com/openai/v1',
+    placeholderName: 'groq',
+  },
+  {
+    id: 'together',
+    label: 'Together AI',
+    description: 'Together OpenAI 兼容接口',
+    defaultProtocol: 'openai-chat-completions',
+    defaultBaseUrl: 'https://api.together.ai/v1',
+    placeholderName: 'together-ai',
+  },
+  {
+    id: 'fireworks',
+    label: 'Fireworks AI',
+    description: 'Fireworks OpenAI 兼容接口',
+    defaultProtocol: 'openai-chat-completions',
+    defaultBaseUrl: 'https://api.fireworks.ai/inference/v1',
+    placeholderName: 'fireworks-ai',
+  },
+  {
+    id: 'cerebras',
+    label: 'Cerebras',
+    description: 'Cerebras OpenAI 兼容接口',
+    defaultProtocol: 'openai-chat-completions',
+    defaultBaseUrl: 'https://api.cerebras.ai/v1',
+    placeholderName: 'cerebras',
+  },
+  {
+    id: 'siliconflow',
+    label: 'SiliconFlow',
+    description: '硅基流动 OpenAI 兼容接口',
+    defaultProtocol: 'openai-chat-completions',
+    defaultBaseUrl: 'https://api.siliconflow.cn/v1',
+    placeholderName: 'siliconflow',
+  },
+  {
+    id: 'custom',
+    label: 'OpenAI Compatible',
+    description: '中转、聚合或任意 OpenAI 兼容接口',
+    defaultProtocol: 'openai-chat-completions',
+    defaultBaseUrl: '',
+    placeholderName: 'openai-compatible',
+  },
+];
+
+export function serviceProviderOption(id?: string | null): ServiceProviderOption {
+  return SERVICE_PROVIDERS.find((item) => item.id === id) ?? SERVICE_PROVIDERS[SERVICE_PROVIDERS.length - 1];
+}
+
+export function serviceProviderLabel(id?: string | null): string {
+  return serviceProviderOption(id).label;
+}
+
+export function serviceProviderProtocols(serviceProviderId?: string | null): ProviderProtocol[] {
+  const provider = serviceProviderOption(serviceProviderId);
+  if (provider.id === 'openai') return ['openai-responses', 'openai-chat-completions'];
+  if (provider.id === 'anthropic') return ['anthropic-messages'];
+  return ['openai-responses', 'openai-chat-completions', 'anthropic-messages'];
+}
 
 export function providerLabel(protocol: ProviderProtocol): string {
   return PROVIDER_LABELS[protocol] ?? protocol;
@@ -192,17 +347,22 @@ export function providerDefaults(protocol: ProviderProtocol): ProviderDefaults {
   return PROVIDER_DEFAULTS[protocol];
 }
 
-export function apiKeyFormatHint(protocol: ProviderProtocol): string {
+export function apiKeyFormatHint(protocol: ProviderProtocol, serviceProviderId?: string | null): string {
+  const serviceProvider = serviceProviderOption(serviceProviderId);
+  if (serviceProvider.id !== 'openai' && serviceProvider.id !== 'anthropic') {
+    return '兼容接口不校验固定 Key 前缀；按上游实际支持选择 OpenAI Responses、OpenAI Chat Completions 或 Anthropic Messages。';
+  }
+
   switch (protocol) {
     case 'openai-chat-completions':
     case 'openai-responses':
-      return 'OpenAI API Key 通常以 sk- 或 sk-proj- 开头；公开文档没有固定长度。';
+      return '官方 OpenAI API Key 通常以 sk- 或 sk-proj- 开头；公开文档没有固定长度。';
     case 'anthropic-messages':
       return 'Anthropic Messages API Key 不做固定前缀校验；请填写完整密钥。';
   }
 }
 
-export function validateApiKey(protocol: ProviderProtocol, apiKey: string): string | null {
+export function validateApiKey(protocol: ProviderProtocol, apiKey: string, serviceProviderId?: string | null): string | null {
   const key = apiKey.trim();
 
   if (!key) {
@@ -213,14 +373,17 @@ export function validateApiKey(protocol: ProviderProtocol, apiKey: string): stri
     return 'API Key 不能包含空白字符。';
   }
 
+  const serviceProvider = serviceProviderOption(serviceProviderId);
+  if (serviceProvider.id !== 'openai') return null;
+
   switch (protocol) {
     case 'openai-chat-completions':
     case 'openai-responses':
       if (!key.startsWith('sk-')) {
-        return 'OpenAI API Key 应以 sk- 或 sk-proj- 开头。';
+        return '官方 OpenAI API Key 应以 sk- 或 sk-proj- 开头。';
       }
       if (key.length < 20) {
-        return 'OpenAI API Key 看起来太短。';
+        return '官方 OpenAI API Key 看起来太短。';
       }
       return null;
     case 'anthropic-messages':

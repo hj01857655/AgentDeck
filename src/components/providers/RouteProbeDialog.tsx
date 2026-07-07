@@ -137,7 +137,7 @@ export function RouteProbeDialog({ channels }: RouteProbeDialogProps) {
       <div className="flex flex-col gap-2 rounded-2xl border border-base-300 bg-base-200/50 p-3 text-xs text-base-content/60 md:flex-row md:items-center md:justify-between">
         <div>
           <p className="font-medium text-base-content">这不是获取模型，也不是单个提供商的 API 探测。</p>
-          <p className="mt-1">自动路由会走网关选择逻辑；指定提供商配置则只验证该行。</p>
+          <p className="mt-1">自动路由会走网关选择逻辑；指定提供商配置则只验证该配置。</p>
         </div>
         <Button
           tone="primary"

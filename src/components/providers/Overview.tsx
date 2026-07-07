@@ -24,14 +24,14 @@ export function Overview({ groups, channels }: OverviewProps) {
 
   return (
     <section className="rounded-2xl border border-base-300 bg-base-200/70 p-3 shadow-xl">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex min-w-0 flex-col gap-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">{t('overview.eyebrow')}</p>
           <h2 className="mt-1 truncate text-base font-semibold tracking-tight text-base-content">{t('overview.title')}</h2>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 2xl:justify-end">
           {stats.map((stat) => (
-            <div key={stat.label} className="rounded-xl border border-base-300 bg-base-100/75 px-3 py-2">
+            <div key={stat.label} className="min-w-0 rounded-xl border border-base-300 bg-base-100/75 px-3 py-2">
               <span className="text-xs text-base-content/55">{stat.label}</span>
               <span className="ml-2 text-sm font-semibold text-base-content">{stat.value}</span>
             </div>

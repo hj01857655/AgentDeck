@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
-import { apiKeyFormatHint, providerDefaults, providerLabel, providerProtocolsForFamily, validateApiKey, type ProviderFamily, type ProviderProtocol } from '../../lib/providers';
-import { apiProbeChannel, testChannel, type AddChannelRequest, type ApiProbeResult, type Channel } from '../../lib/tauri';
+import {
+  SERVICE_PROVIDERS,
+  apiKeyFormatHint,
+  providerDefaults,
+  providerLabel,
+  serviceProviderOption,
+  serviceProviderProtocols,
+  validateApiKey,
+  type ProviderFamily,
+  type ProviderProtocol,
+  type ServiceProviderId,
+} from '../../lib/providers';
+import { apiProbeChannel, getToolUiState, saveToolUiState, testChannel, type AddChannelRequest, type ApiProbeResult, type Channel } from '../../lib/tauri';
 import { Button } from '../shared/Button';
 import { ApiProbeIcon, DownloadIcon, SaveIcon, XIcon } from '../shared/ActionIcons';
 import { Field, TextInput } from '../shared/Field';
@@ -10,6 +21,7 @@ function createEmptyForm(protocol: ProviderProtocol = 'openai-chat-completions')
   const defaults = providerDefaults(protocol);
   return {
     name: '',
+    service_provider: 'custom' as ServiceProviderId,
     base_url: defaults.base_url,
     api_key: '',
     models: '',
@@ -30,20 +42,30 @@ function modelCacheKey(protocol: ProviderProtocol, baseUrl: string) {
   return `agentdeck:model-list:${protocol}:${baseUrl.trim().replace(/\/+$/, '')}`;
 }
 
-function readModelCache(protocol: ProviderProtocol, baseUrl: string): string[] {
-  if (typeof window === 'undefined' || !baseUrl.trim()) return [];
+async function readModelCache(protocol: ProviderProtocol, baseUrl: string): Promise<string[]> {
+  if (!baseUrl.trim()) return [];
   try {
-    const raw = window.localStorage.getItem(modelCacheKey(protocol, baseUrl));
-    const parsed = raw ? JSON.parse(raw) : null;
-    return Array.isArray(parsed?.models) ? parsed.models.filter((item: unknown) => typeof item === 'string') : [];
+    const state = await getToolUiState();
+    const entry = state.model_list_cache?.[modelCacheKey(protocol, baseUrl)];
+    return Array.isArray(entry?.models) ? entry.models.filter((item: unknown) => typeof item === 'string') : [];
   } catch {
     return [];
   }
 }
 
-function writeModelCache(protocol: ProviderProtocol, baseUrl: string, models: string[]) {
-  if (typeof window === 'undefined' || !baseUrl.trim() || models.length === 0) return;
-  window.localStorage.setItem(modelCacheKey(protocol, baseUrl), JSON.stringify({ models, cached_at: Date.now() }));
+async function writeModelCache(protocol: ProviderProtocol, baseUrl: string, models: string[]) {
+  if (!baseUrl.trim() || models.length === 0) return;
+  const state = await getToolUiState();
+  await saveToolUiState({
+    ...state,
+    model_list_cache: {
+      ...(state.model_list_cache ?? {}),
+      [modelCacheKey(protocol, baseUrl)]: {
+        models: Array.from(new Set(models.map((model) => model.trim()).filter(Boolean))),
+        cached_at: Date.now(),
+      },
+    },
+  });
 }
 
 type ApiProbeState =
@@ -103,7 +125,7 @@ interface ChannelEditorProps {
   onSave: (req: AddChannelRequest) => Promise<void>;
 }
 
-export function ChannelEditor({ channel, defaultProtocol = 'openai-chat-completions', providerPage, saving, onCancel, onSave }: ChannelEditorProps) {
+export function ChannelEditor({ channel, defaultProtocol = 'openai-chat-completions', providerPage: _providerPage, saving, onCancel, onSave }: ChannelEditorProps) {
   const { t } = useI18n();
   const [form, setForm] = useState(createEmptyForm(defaultProtocol));
   const [error, setError] = useState<string | null>(null);
@@ -117,12 +139,16 @@ export function ChannelEditor({ channel, defaultProtocol = 'openai-chat-completi
 
   const selectedModels = useMemo(() => parseModels(form.models), [form.models]);
   const modelOptions = useMemo(() => Array.from(new Set([...discoveredModels, ...selectedModels])).sort(), [discoveredModels, selectedModels]);
-  const protocolOptions = useMemo(() => providerProtocolsForFamily(providerPage), [providerPage]);
+  const protocolOptions = useMemo(
+    () => Array.from(new Set([...serviceProviderProtocols(form.service_provider), form.protocol])),
+    [form.protocol, form.service_provider],
+  );
 
   useEffect(() => {
     if (channel) {
       setForm({
         name: channel.name,
+        service_provider: serviceProviderOption(channel.service_provider).id,
         base_url: channel.base_url,
         api_key: channel.api_key,
         models: serializeModels(channel.models),
@@ -141,18 +167,47 @@ export function ChannelEditor({ channel, defaultProtocol = 'openai-chat-completi
   }, [channel, defaultProtocol]);
 
   useEffect(() => {
-    const cached = readModelCache(form.protocol, form.base_url);
-    setDiscoveredModels(cached);
+    let cancelled = false;
+    setDiscoveredModels([]);
     setModelError(null);
     setModelPickerOpen(false);
+    void readModelCache(form.protocol, form.base_url).then((cached) => {
+      if (!cancelled) setDiscoveredModels(cached);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [form.protocol, form.base_url]);
 
   const setProtocol = (protocol: ProviderProtocol) => {
     const defaults = providerDefaults(protocol);
+    setForm((current) => {
+      const serviceProvider = serviceProviderOption(current.service_provider);
+      const isOfficialMatch =
+        (serviceProvider.id === 'openai' && protocol !== 'anthropic-messages') ||
+        (serviceProvider.id === 'anthropic' && protocol === 'anthropic-messages');
+
+      return {
+        ...current,
+        protocol,
+        base_url: isOfficialMatch ? defaults.base_url : current.base_url,
+        models: '',
+      };
+    });
+    setDiscoveredModels([]);
+    setModelError(null);
+    setModelPickerOpen(false);
+    setApiStatus(null);
+  };
+
+  const setServiceProvider = (serviceProvider: ServiceProviderId) => {
+    const option = serviceProviderOption(serviceProvider);
     setForm((current) => ({
       ...current,
-      protocol,
-      base_url: defaults.base_url,
+      service_provider: option.id,
+      name: current.name.trim() ? current.name : option.placeholderName,
+      protocol: option.defaultProtocol,
+      base_url: option.defaultBaseUrl || current.base_url,
       models: '',
     }));
     setDiscoveredModels([]);
@@ -185,7 +240,7 @@ export function ChannelEditor({ channel, defaultProtocol = 'openai-chat-completi
 
   const fetchModels = async () => {
     if (!form.base_url.trim()) return setError(t('editor.baseUrlRequired'));
-    const apiKeyError = validateApiKey(form.protocol, form.api_key);
+    const apiKeyError = validateApiKey(form.protocol, form.api_key, form.service_provider);
     if (apiKeyError) return setError(apiKeyError);
 
     setError(null);
@@ -199,7 +254,7 @@ export function ChannelEditor({ channel, defaultProtocol = 'openai-chat-completi
         return;
       }
       setDiscoveredModels(result.models);
-      writeModelCache(form.protocol, form.base_url, result.models);
+      void writeModelCache(form.protocol, form.base_url, result.models);
       setModelPickerOpen(true);
       if (result.models.length === 0) setModelError('接口未返回模型列表。');
     } catch (err) {
@@ -212,7 +267,7 @@ export function ChannelEditor({ channel, defaultProtocol = 'openai-chat-completi
 
   const probeApi = async () => {
     if (!form.base_url.trim()) return setError(t('editor.baseUrlRequired'));
-    const apiKeyError = validateApiKey(form.protocol, form.api_key);
+    const apiKeyError = validateApiKey(form.protocol, form.api_key, form.service_provider);
     if (apiKeyError) return setError(apiKeyError);
     const model = selectedModels[0];
     if (!model) return setError(t('editor.modelsRequired'));
@@ -241,13 +296,14 @@ export function ChannelEditor({ channel, defaultProtocol = 'openai-chat-completi
     const models = selectedModels;
     if (!form.name.trim()) return setError(t('editor.nameRequired'));
     if (!form.base_url.trim()) return setError(t('editor.baseUrlRequired'));
-    const apiKeyError = validateApiKey(form.protocol, form.api_key);
+    const apiKeyError = validateApiKey(form.protocol, form.api_key, form.service_provider);
     if (apiKeyError) return setError(apiKeyError);
     if (models.length === 0) return setError(t('editor.modelsRequired'));
 
     setError(null);
     await onSave({
       name: form.name.trim(),
+      service_provider: form.service_provider,
       base_url: form.base_url.trim().replace(/\/+$/, ''),
       api_key: form.api_key.trim(),
       models,
@@ -259,6 +315,17 @@ export function ChannelEditor({ channel, defaultProtocol = 'openai-chat-completi
   return (
     <div>
       <div className="grid gap-4 md:grid-cols-2">
+        <Field label="服务商">
+          <select
+            value={form.service_provider}
+            onChange={(event) => setServiceProvider(event.target.value as ServiceProviderId)}
+            className="select select-bordered w-full bg-base-100"
+          >
+            {SERVICE_PROVIDERS.map((provider) => (
+              <option key={provider.id} value={provider.id}>{provider.label}</option>
+            ))}
+          </select>
+        </Field>
         <Field label={t('editor.name')}>
           <TextInput value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="prod-openai-key" />
         </Field>
@@ -274,19 +341,19 @@ export function ChannelEditor({ channel, defaultProtocol = 'openai-chat-completi
           </select>
         </Field>
         <Field label={t('editor.baseUrl')}>
-          <TextInput value={form.base_url} onChange={(event) => setForm({ ...form, base_url: event.target.value })} placeholder="https://api.openai.com" className="font-mono" />
+          <TextInput value={form.base_url} onChange={(event) => setForm({ ...form, base_url: event.target.value })} placeholder="https://api.example.com/v1" className="font-mono" />
         </Field>
         <Field label={t('editor.weight')} hint={t('editor.weightHint')}>
           <TextInput value={form.weight} onChange={(event) => setForm({ ...form, weight: Number(event.target.value) })} type="number" />
         </Field>
         <div className="md:col-span-2">
-          <Field label={t('editor.apiKey')} hint={apiKeyFormatHint(form.protocol)}>
+          <Field label={t('editor.apiKey')} hint={apiKeyFormatHint(form.protocol, form.service_provider)}>
             <div className="relative">
               <input
                 value={form.api_key}
                 onChange={(event) => setForm({ ...form, api_key: event.target.value })}
                 type={showApiKey ? 'text' : 'password'}
-                placeholder="sk-..."
+                placeholder={form.service_provider === 'openai' ? 'sk-...' : '任意兼容接口密钥'}
                 className="input input-bordered w-full bg-base-100 pr-11 font-mono text-base-content placeholder:text-base-content/35"
               />
               <button
@@ -403,7 +470,7 @@ export function ChannelEditor({ channel, defaultProtocol = 'openai-chat-completi
                       type="button"
                       onClick={() => removeModel(model)}
                       className="rounded px-1 text-primary/65 transition hover:bg-primary/10 hover:text-primary"
-                      aria-label={`移除模型 ${model}`}
+                      aria-label={'移除模型 ' + model}
                     >
                       ×
                     </button>
@@ -508,4 +575,5 @@ export function ChannelEditor({ channel, defaultProtocol = 'openai-chat-completi
     </div>
   );
 }
+
 

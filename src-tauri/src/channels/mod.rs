@@ -3,11 +3,17 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
+fn default_service_provider() -> String {
+    "custom".to_string()
+}
+
 /// One upstream channel (a single API Key + base URL combo)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channel {
     pub id: String,
     pub name: String,
+    #[serde(default = "default_service_provider")]
+    pub service_provider: String,
     pub base_url: String, // e.g. https://api.openai.com
     pub api_key: String,
     pub models: Vec<String>, // which models this channel serves
@@ -25,8 +31,6 @@ pub enum ChannelProtocol {
     OpenAIResponses,
     #[serde(rename = "anthropic-messages")]
     AnthropicMessages,
-    #[serde(rename = "openai-compatible-chat-completions")]
-    OpenAICompatibleChatCompletions,
 }
 
 /// Channel pool with thread-safe access
@@ -45,8 +49,14 @@ impl ChannelPool {
         self.channels.read().clone()
     }
 
+    pub fn replace_all(&self, channels: Vec<Channel>) {
+        *self.channels.write() = channels;
+    }
+
     pub fn add(&self, mut channel: Channel) -> String {
-        channel.id = Uuid::new_v4().to_string();
+        if channel.id.trim().is_empty() {
+            channel.id = Uuid::new_v4().to_string();
+        }
         self.channels.write().push(channel.clone());
         channel.id
     }

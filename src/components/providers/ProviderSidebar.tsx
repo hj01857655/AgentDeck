@@ -11,17 +11,17 @@ interface ProviderSidebarProps {
 export function ProviderSidebar({ groups, activePage, onSelectPage }: ProviderSidebarProps) {
   const { t } = useI18n();
   const pageItems: Array<{ id: ProviderFamily; title: string; description: string }> = [
-    { id: 'openai', title: 'OpenAI', description: 'Chat Completions / Responses' },
-    { id: 'anthropic', title: 'Anthropic', description: 'Messages API' },
+    { id: 'openai', title: 'OpenAI / Compatible', description: 'Responses / Chat Completions / 兼容接口' },
+    { id: 'anthropic', title: 'Anthropic 官方', description: 'Messages API' },
   ];
 
   return (
     <aside className="sticky top-6 self-start rounded-3xl border border-base-300 bg-base-200/70 p-3 shadow-xl backdrop-blur">
       <nav aria-label="页面导航" className="space-y-2">
         <div className="px-3 py-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">页面</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">协议筛选</p>
           <h2 className="mt-1 text-xl font-semibold text-base-content">{t('sidebar.allProviders')}</h2>
-          <p className="mt-1 text-xs text-base-content/55">区分 OpenAI 和 Anthropic 的提供商配置。</p>
+          <p className="mt-1 text-xs text-base-content/55">按 API 协议族筛选提供商配置。</p>
         </div>
 
         {pageItems.map((item) => {

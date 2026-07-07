@@ -4,12 +4,16 @@ import {
   applyChannelToTool,
   deleteChannel,
   getConsoleSettings,
+  getToolUiState,
   listChannels,
+  probeChannel,
   saveConsoleSettings,
+  saveToolUiState,
   updateChannel,
   setChannelEnabled,
   type AddChannelRequest,
   type Channel,
+  type ClientId,
   type ToolSyncTarget,
 } from '../lib/tauri';
 import {
@@ -25,43 +29,39 @@ import { Badge } from './shared/Badge';
 import { Dialog } from './shared/Dialog';
 import { EmptyState } from './shared/EmptyState';
 import { PlusIcon, RefreshIcon, RouteProbeIcon, TrashIcon, XIcon } from './shared/ActionIcons';
-import { ProviderSidebar } from './providers/ProviderSidebar';
 import { Overview } from './providers/Overview';
 import { ProviderSection } from './providers/ProviderSection';
 import { ChannelEditor } from './providers/ChannelEditor';
 import { RouteProbeDialog } from './providers/RouteProbeDialog';
 import { useI18n } from '../i18n';
+import { clientIcon, getClientApp } from './shared/clientApps';
 
 type PendingAction = { kind: 'delete'; channel: Channel };
 
 type AppliedToolChannelIds = Partial<Record<ToolSyncTarget, string>>;
 
-const appliedToolStorageKey = 'agentdeck:applied-tool-channel-ids';
-
-function readAppliedToolChannelIds(): AppliedToolChannelIds {
-  if (typeof window === 'undefined') return {};
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(appliedToolStorageKey) ?? '{}') as AppliedToolChannelIds;
-    return {
-      codex: typeof parsed.codex === 'string' ? parsed.codex : undefined,
-      claude: typeof parsed.claude === 'string' ? parsed.claude : undefined,
-    };
-  } catch {
-    return {};
-  }
+interface DashboardProps {
+  activeClient: ClientId;
 }
 
-function writeAppliedToolChannelIds(value: AppliedToolChannelIds) {
-  if (typeof window === 'undefined') return;
-  window.localStorage.setItem(appliedToolStorageKey, JSON.stringify(value));
+function providerFamilyForClient(clientId: ClientId): ProviderFamily | null {
+  if (clientId === 'codex') return 'openai';
+  if (clientId === 'claude-code') return 'anthropic';
+  return null;
 }
 
-export default function Dashboard() {
+function syncTargetForClient(clientId: ClientId): ToolSyncTarget | null {
+  if (clientId === 'codex') return 'codex';
+  if (clientId === 'claude-code') return 'claude';
+  return null;
+}
+
+export default function Dashboard({ activeClient }: DashboardProps) {
   const { t } = useI18n();
   const [channels, setChannels] = useState<Channel[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [activePage, setActivePage] = useState<ProviderFamily>('openai');
+  const [activePage, setActivePage] = useState<ProviderFamily | null>('openai');
   const [defaultProtocol, setDefaultProtocol] = useState<ProviderProtocol>('openai-chat-completions');
   const [selectedChannelId, setSelectedChannelId] = useState('');
   const [editingChannel, setEditingChannel] = useState<Channel | null>(null);
@@ -70,7 +70,7 @@ export default function Dashboard() {
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
   const [pageNotice, setPageNotice] = useState<string | null>(null);
-  const [appliedToolChannelIds, setAppliedToolChannelIds] = useState<AppliedToolChannelIds>(() => readAppliedToolChannelIds());
+  const [appliedToolChannelIds, setAppliedToolChannelIds] = useState<AppliedToolChannelIds>({});
   const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   const refreshChannels = useCallback(async () => {
@@ -93,6 +93,28 @@ export default function Dashboard() {
   useEffect(() => {
     void refreshChannels();
   }, [refreshChannels]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getToolUiState()
+      .then((state) => {
+        if (!cancelled) setAppliedToolChannelIds(state.applied_tool_channel_ids ?? {});
+      })
+      .catch((err) => {
+        if (!cancelled) setPageError(String(err));
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const nextFamily = providerFamilyForClient(activeClient);
+    setActivePage(nextFamily);
+    if (!nextFamily) return;
+    setDefaultProtocol((current) => {
+      const protocols = providerProtocolsForFamily(nextFamily);
+      return protocols.includes(current) ? current : defaultProtocolForFamily(nextFamily);
+    });
+  }, [activeClient]);
 
   useEffect(() => {
     let cancelled = false;
@@ -126,11 +148,13 @@ export default function Dashboard() {
   }, [defaultProtocol, selectedChannelId, settingsLoaded]);
 
   const pageChannels = useMemo(() => {
+    if (!activePage) return [];
     const protocols = providerProtocolsForFamily(activePage);
     return channels.filter((channel) => protocols.includes(channel.protocol));
   }, [activePage, channels]);
   const groups = useMemo(() => buildProviderGroups(pageChannels), [pageChannels]);
   const defaultProtocolForPage = useMemo(() => {
+    if (!activePage) return 'openai-chat-completions';
     const protocols = providerProtocolsForFamily(activePage);
     return protocols.includes(defaultProtocol) ? defaultProtocol : defaultProtocolForFamily(activePage);
   }, [activePage, defaultProtocol]);
@@ -190,17 +214,31 @@ export default function Dashboard() {
     }
   };
 
-  const handleApplyToTool = async (channel: Channel, target: ToolSyncTarget) => {
+  const handleProbeChannel = async (channel: Channel) => {
+    setPageError(null);
+    setPageNotice(null);
+    try {
+      const result = await probeChannel(channel.id);
+      setPageNotice(`检测完成：HTTP ${result.status} · ${result.elapsed_ms}ms${result.models.length ? ` · 更新 ${result.models.length} 个模型` : ''}`);
+      await refreshChannels();
+    } catch (err) {
+      setPageError(String(err));
+      await refreshChannels();
+    }
+  };
+
+  const handleEnableForTool = async (channel: Channel, target: ToolSyncTarget) => {
     setPageError(null);
     setPageNotice(null);
     setSelectedChannelId(channel.id);
     try {
       const result = await applyChannelToTool(channel.id, target);
-      const nextApplied = { ...appliedToolChannelIds, [target]: channel.id };
+      const state = await getToolUiState();
+      const nextApplied = { ...(state.applied_tool_channel_ids ?? {}), [target]: channel.id };
+      await saveToolUiState({ ...state, applied_tool_channel_ids: nextApplied });
       setAppliedToolChannelIds(nextApplied);
-      writeAppliedToolChannelIds(nextApplied);
       const targetName = target === 'codex' ? 'Codex' : 'Claude';
-      setPageNotice(`已应用到 ${targetName}：更新 ${result.files.length} 个文件，备份 ${result.backups.length} 个文件。`);
+      setPageNotice(`已启用 ${targetName} 当前提供商：更新 ${result.files.length} 个文件，备份 ${result.backups.length} 个文件。`);
     } catch (err) {
       setPageError(String(err));
     }
@@ -222,10 +260,12 @@ export default function Dashboard() {
     ? `将删除提供商配置「${pendingAction.channel.name}」，此操作不可撤销。`
     : '';
 
-  return (
-    <div className="mx-auto grid max-w-[1800px] gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
-      <ProviderSidebar groups={buildProviderGroups(channels)} activePage={activePage} onSelectPage={setActivePage} />
+  const activeClientInfo = getClientApp(activeClient);
+  const hasProviderPlane = activePage !== null;
+  const syncTarget = syncTargetForClient(activeClient);
 
+  return (
+    <div className="mx-auto max-w-[1800px]">
       <main className="min-w-0 space-y-5">
         <Overview groups={groups} channels={pageChannels} />
 
@@ -241,15 +281,31 @@ export default function Dashboard() {
           </div>
         )}
 
+        {!hasProviderPlane ? (
+          <section className="rounded-3xl border border-base-300 bg-base-100/80 p-6 shadow-xl">
+            <div className="flex items-start gap-4">
+              <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-base-300 bg-base-200/70">
+                {clientIcon(activeClient, 22)}
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">{activeClientInfo.shortName}</p>
+                <h2 className="mt-1 text-xl font-semibold text-base-content">{activeClientInfo.name} 暂未接入提供商配置</h2>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-base-content/55">
+                  提供商配置目前只对 Codex 和 Claude Code（CLI）生效。{activeClientInfo.name} 的运行时路径、MCP、Skills、Plugin 可在对应管理页或设置页查看，不会再强行显示成 OpenAI Compatible。
+                </p>
+              </div>
+            </div>
+          </section>
+        ) : (
         <section className="rounded-3xl border border-base-300 bg-base-200/55 p-4 shadow-2xl">
           <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-xl font-semibold text-base-content">{activePage === 'openai' ? 'OpenAI' : 'Anthropic'}</h2>
+                <h2 className="text-xl font-semibold text-base-content">{activePage === 'openai' ? 'OpenAI / OpenAI Compatible' : 'Anthropic Messages'}</h2>
                 <Badge tone="info">{pageChannels.length} {t('providerMatrix.channels')}</Badge>
               </div>
               <p className="mt-2 text-sm text-base-content/55">
-                {t('dashboard.allDescription')}
+                当前 AppSwitcher 只在 Codex / Claude Code（CLI）间切换提供商配置上下文。其它 App 不再映射到 OpenAI Compatible。
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -283,16 +339,19 @@ export default function Dashboard() {
                   key={group.protocol}
                   group={group}
                   selectedChannelId={selectedChannelId}
+                  syncTarget={syncTarget}
                   appliedToolChannelIds={appliedToolChannelIds}
                   onEdit={openEditChannel}
                   onDelete={(channel) => setPendingAction({ kind: 'delete', channel })}
                   onToggleEnabled={handleToggleEnabled}
-                  onApplyToTool={(channel, target) => void handleApplyToTool(channel, target)}
+                  onProbe={handleProbeChannel}
+                  onEnableForTool={(channel, target) => void handleEnableForTool(channel, target)}
                 />
               ))}
             </div>
           )}
         </section>
+        )}
       </main>
 
       <Dialog
@@ -305,7 +364,7 @@ export default function Dashboard() {
         <ChannelEditor
           channel={editingChannel}
           defaultProtocol={editingChannel?.protocol ?? defaultProtocolForPage}
-          providerPage={activePage}
+          providerPage={activePage ?? 'openai'}
           saving={saving}
           onCancel={() => setShowEditor(false)}
           onSave={handleSaveChannel}
